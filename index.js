@@ -12,6 +12,9 @@ app.use(cors())
 // in here connect to the mongodb
 
 import { MongoClient } from 'mongodb';
+/* ==========================================================
+   DATABASE
+   ========================================================== */
 
 const client =new MongoClient(`mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASSWORD}@businessmanagement.ypdfgxh.mongodb.net/`);
 
@@ -24,6 +27,37 @@ export async function connectToMongoDB() {
     console.dir(err);
   }
 }
+
+const services = database.collection('services')
+
+
+/* ==========================================================
+   API ROUTES
+   ========================================================== */
+
+   // ---------- Services ----------
+
+   // POST /services -> add a new service (admin only)
+
+   app.post('services', async(req, res)=>{
+    const service = req.body
+    const result = await services.insertOne(service);
+    res.send(result);
+   })
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 app.get('/', (req,res)=>{
