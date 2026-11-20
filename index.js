@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors'
 import 'dotenv/config'
-import { MongoClient } from 'mongodb';
+import { MongoClient, ObjectId } from 'mongodb';
 
 const app = express();
 const port = process.env.PORT || 8000
@@ -56,70 +56,103 @@ export async function connectToMongoDB() {
    // POST /services -> add a new service (admin only)
 
    app.post('/services', async(req, res)=>{
-    const service = req.body
+    const service = {
+      ...req.body,
+      createdAt: new Date(), 
+    };
     const result = await services.insertOne(service);
     res.send(result);
    })
 
 
-   // GET /service -> get the services
+  
 
-   app.get('/services', async (req, res)=>{
-    try{
-      const query = {}
-      console.log('query', req.query);
+  // GET /services -> list services (supports status, category, adminId, search, sort)
+app.get('/services', async (req, res) => {
+  try {
+    const query = {};
 
-      if(req.query){
-        if(req.query.status){
-          query.status = req.query.status
-        }
-
-        if(req.query.category){
-          query.category = req.query.category
-        }
-        if(req.query.adminId){
-          query.adminId = req.query.adminId
-        }
-
-        // search filter
-
-        if(req.query.search){
-          const searchText = req.query.search;
-
-          query.$or = [
-            {
-                        serviceName: {
-                            $regex: searchText,
-                            $options: 'i'
-                        }
-                    },
-                    {
-                        description: {
-                            $regex: searchText,
-                            $options: 'i'
-                        }
-                    },
-                    {
-                        category: {
-                            $regex: searchText,
-                            $options: 'i'
-                        }
-                    }
-          ]
-        }
-      }
-      const result = await services.find(query).sort({_id: -1}).toArray();
-      res.send(result);
-
-    }catch(er){
-      console.log(er);
-      res.status(500).send({message: `failed to load service`})
+    // সব মান String বানাও, যাতে ?status[$ne]=x এর মতো অবজেক্ট ঢুকতে না পারে
+    const status = String(req.query.status ?? '');
+    if (status === 'active' || status === 'inactive') {
+      query.status = status;
     }
-   })
+
+    if (req.query.category) {
+      query.category = String(req.query.category);
+    }
+
+    if (req.query.adminId) {
+      query.adminId = String(req.query.adminId);
+    }
+
+    // Search by service NAME only (PDF requirement)
+    if (req.query.search) {
+      const searchText = String(req.query.search)
+        .trim()
+        .replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); // বিশেষ চিহ্ন এস্কেপ
+
+      if (searchText) {
+        query.serviceName = { $regex: searchText, $options: 'i' };
+      }
+    }
+
+    // Sorting: ?sort=price_asc | price_desc (default: newest first)
+    let sortOption = { _id: -1 };
+
+    if (req.query.sort === 'price_asc') {
+      sortOption = { price: 1, _id: -1 };
+    } else if (req.query.sort === 'price_desc') {
+      sortOption = { price: -1, _id: -1 };
+    }
+
+    const result = await services.find(query).sort(sortOption).toArray();
+    res.send(result);
+  } catch (err) {
+    console.error(err);
+    res.status(500).send({ message: 'Failed to load services' });
+  }
+});
 
 
+  // Get Data for single api /services
+
+  app.get('/services/:id', async(req,res)=>{
+    const id = req.params.id
+    const result = await services.findOne({_id: new ObjectId(id)});
+
+    if(!result){
+      return res.status(404).send(({message: 'service not found'}))
+    }
+    res.send(result);
+  })
+
+  // Delete /services
+
+  app.delete('/services/:id', async(req, res)=>{
+    const id = req.params.id;
+    const result = await services.deleteOne({_id: new ObjectId(id)});
+    res.send(result)
+  })
 
 
+// Patch / services
+
+app.patch('/services/:id', async(req,res)=>{
+  const id = req.params.id
+  const updatesService = req.body
+
+  const query = {_id: new ObjectId(id)}
+
+  const updateDoc = {
+    $set: updatesService
+  }
+
+  const result = await services.updateOne(query, updateDoc)
+  res.send(result)
+
+  
+})
 
 
 
