@@ -44,6 +44,24 @@ export async function connectToMongoDB() {
  const connectedClient = await connectToMongoDB();
  const database = connectedClient.db('luma');
  const services = database.collection('services');
+ const appointments = database.collection('appointments');
+
+// Prevent two active bookings for the same service, date and time slot
+await appointments.createIndex(
+  {
+    appointmentDate: 1,
+    timeSlot: 1
+  },
+  {
+    name: 'unique_active_slot',
+    unique: true,
+    partialFilterExpression: {
+      status: {
+        $in: ['pending', 'confirmed']
+      }
+    }
+  }
+);
  
 
 
@@ -153,6 +171,181 @@ app.patch('/services/:id', async(req,res)=>{
 
   
 })
+
+
+
+// ---------- Appoinments ----------
+
+const TIME_SLOTS = [
+  '09:00', '09:30', '10:00', '10:30',
+  '11:00', '11:30', '12:00', '13:00',
+  '13:30', '14:00', '14:30', '15:00',
+  '15:30', '16:00', '16:30', '17:00',
+];
+
+// Appointment-এর সঙ্গে Service এবং Customer Data যুক্ত করবে
+const appointmentPipeline = (match, { withCustomer = false } = {}) => [
+  { $match: match },
+  { $sort: { _id: -1 } },
+
+  {
+    $lookup: {
+      from: 'services',
+      localField: 'serviceId',
+      foreignField: '_id',
+      as: 'service'
+    }
+  },
+  {
+    $unwind: {
+      path: '$service',
+      preserveNullAndEmptyArrays: true
+    }
+  },
+
+  ...(withCustomer
+    ? [
+        {
+          $lookup: {
+            from: 'user',
+            localField: 'customerId',
+            foreignField: '_id',
+            as: 'customer'
+          }
+        },
+        {
+          $unwind: {
+            path: '$customer',
+            preserveNullAndEmptyArrays: true
+          }
+        }
+      ]
+    : []),
+
+  {
+    $project: {
+      serviceId: 1,
+      customerId: 1,
+      appointmentDate: 1,
+      timeSlot: 1,
+      message: 1,
+      servicePrice: 1,
+      paymentStatus: 1,
+      status: 1,
+      createdAt: 1,
+
+      'service.serviceName': 1,
+      'service.image': 1,
+      'service.category': 1,
+      'service.duration': 1,
+
+      'customer.name': 1,
+      'customer.email': 1,
+      'customer.image': 1
+    }
+  }
+];
+
+app.post('/appointments', async (req, res) => {
+  try {
+    const {
+      serviceId,
+      customerId,
+      appointmentDate,
+      timeSlot,
+      message
+    } = req.body;
+
+    if (!serviceId || !customerId || !appointmentDate || !timeSlot) {
+      return res.status(400).send({
+        message: 'All fields are required'
+      });
+    }
+
+    if (!ObjectId.isValid(serviceId)) {
+      return res.status(400).send({
+        message: 'Invalid service ID'
+      });
+    }
+    if (!ObjectId.isValid(customerId)) {
+      return res.status(400).send({
+        message: 'Invalid customer ID'
+      });
+    }
+
+    if (!TIME_SLOTS.includes(timeSlot)) {
+      return res.status(400).send({
+        message: 'Invalid time slot'
+      });
+    }
+
+    // Check service
+    const service = await services.findOne({
+      _id: new ObjectId(serviceId),
+      status: 'active'
+    });
+
+    if (!service) {
+      return res.status(404).send({
+        message: 'Service not found or inactive'
+      });
+    }
+
+    // Check duplicate appointment
+    const existingAppointment = await appointments.findOne({
+      appointmentDate,
+      timeSlot,
+      status: {
+        $in: ['pending', 'confirmed']
+      }
+    });
+
+    if (existingAppointment) {
+      return res.status(409).send({
+        message: 'This time slot is already booked'
+      });
+    }
+
+    const newAppointment = {
+      serviceId: new ObjectId(serviceId),
+      customerId: new ObjectId(customerId),
+      appointmentDate,
+      timeSlot,
+      message: message || '',
+      servicePrice: service.price,
+      paymentStatus: 'unpaid',
+      status: 'pending',
+      createdAt: new Date()
+    };
+
+    const result = await appointments.insertOne(newAppointment);
+
+    res.status(201).send({
+      success: true,
+      message: 'Appointment booked successfully',
+      insertedId: result.insertedId
+    });
+
+  } catch (error) {
+    if (error.code === 11000) {
+      return res.status(409).send({
+        message: 'This time slot is already booked'
+      });
+    }
+
+    console.error(error);
+
+    res.status(500).send({
+      message: 'Failed to create appointment'
+    });
+  }
+});
+
+
+
+
+
+
 
 
 
