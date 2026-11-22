@@ -718,3 +718,6 @@ app.get('/', (req,res)=>{
 app.listen(port, ()=>{
     console.log(`luma haircut is running at ${port}`)
 })
+
+
+export default app;
